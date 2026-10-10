@@ -1,3 +1,7 @@
+---
+status: done
+---
+
 # Sync the explicit-sync PR and personal fork with upstream
 
 ## Goal and scope

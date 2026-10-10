@@ -1,3 +1,7 @@
+---
+status: done
+---
+
 # Client environment window rules
 
 ## Goal
