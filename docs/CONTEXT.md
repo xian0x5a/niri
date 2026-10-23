@@ -23,5 +23,5 @@ A non-focusing indication that a window requests the user's attention.
 _Avoid_: Activation
 
 **XDG activation policy**:
-A per-window `on-xdg-activate` rule that focuses, marks urgent, or ignores accepted requests. When unset, valid-serial requests focus and serialless requests mark urgent. Explicit `"focus"` also focuses serialless requests. Invalid-serial requests require the global debug override, and expired tokens are ignored. The rule applies before and after mapping; `open-focused` independently controls ordinary initial focus.
+A per-window `on-xdg-activate` rule that focuses, marks urgent, or ignores accepted requests. When unset, valid-serial requests focus and serialless requests mark urgent. Explicit `"focus"` also focuses serialless requests. Invalid-serial requests require the global debug override, and expired tokens are ignored. The rule applies to mapped windows; for a window that requests activation before mapping, `open-focused` takes precedence, otherwise a live token focuses it.
 _Avoid_: Focusability

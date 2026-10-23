@@ -676,32 +676,6 @@ window-rule {
 }
 ```
 
-The former `focus-on-xdg-activate` and `urgent-on-xdg-activate` settings have been removed.
-Migrate existing rules as follows:
-
-| Former settings | Replacement |
-| --- | --- |
-| Focus `false`, urgency unset or `true` | `on-xdg-activate "set-urgent"` |
-| Both `false` | `on-xdg-activate "ignore"` |
-| Both unset or `true` | Leave `on-xdg-activate` unset |
-
-There is no equivalent for allowing valid-serial focus while ignoring serialless requests.
-Explicit `"focus"` also focuses serialless requests.
-
-This property does not clear existing urgency or affect direct focus through pointer input,
-keyboard navigation, or compositor actions. It also applies to activation requests received before
-mapping; ordinary initial focus remains controlled by [`open-focused`](#open-focused).
-
-```kdl
-// Do not let an automation browser take focus or request attention.
-window-rule {
-    match app-id="^automation-browser$"
-
-    open-focused false
-    on-xdg-activate "ignore"
-}
-```
-
 #### `opacity`
 
 Set the opacity of the window.

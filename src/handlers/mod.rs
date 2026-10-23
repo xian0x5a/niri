@@ -766,28 +766,6 @@ impl GammaControlHandler for State {
 
 struct UrgentOnlyMarker;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum XdgActivationAction {
-    Activate,
-    Urgent,
-    Ignore,
-}
-
-pub(super) fn xdg_activation_action(
-    token_data: &XdgActivationTokenData,
-    on_xdg_activate: Option<niri_config::OnXdgActivate>,
-) -> XdgActivationAction {
-    match on_xdg_activate {
-        Some(niri_config::OnXdgActivate::Ignore) => XdgActivationAction::Ignore,
-        Some(niri_config::OnXdgActivate::SetUrgent) => XdgActivationAction::Urgent,
-        Some(niri_config::OnXdgActivate::Focus) => XdgActivationAction::Activate,
-        None if token_data.user_data.get::<UrgentOnlyMarker>().is_some() => {
-            XdgActivationAction::Urgent
-        }
-        None => XdgActivationAction::Activate,
-    }
-}
-
 impl XdgActivationHandler for State {
     fn activation_state(&mut self) -> &mut XdgActivationState {
         &mut self.niri.activation_state
@@ -842,20 +820,27 @@ impl XdgActivationHandler for State {
         if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
             if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(&surface) {
                 let window = mapped.window.clone();
-                let rules = mapped.rules();
-                let action = xdg_activation_action(&token_data, rules.on_xdg_activate);
-
-                match action {
-                    XdgActivationAction::Activate => {
+                match mapped.rules().on_xdg_activate {
+                    Some(niri_config::OnXdgActivate::Ignore) => {}
+                    Some(niri_config::OnXdgActivate::SetUrgent) => {
+                        mapped.set_urgent(true);
+                        self.niri.queue_redraw_all();
+                    }
+                    Some(niri_config::OnXdgActivate::Focus) => {
                         self.niri.layout.activate_window(&window);
                         self.niri.layer_shell_on_demand_focus = None;
                         self.niri.queue_redraw_all();
                     }
-                    XdgActivationAction::Urgent => {
-                        mapped.set_urgent(true);
-                        self.niri.queue_redraw_all();
+                    None => {
+                        if token_data.user_data.get::<UrgentOnlyMarker>().is_some() {
+                            mapped.set_urgent(true);
+                            self.niri.queue_redraw_all();
+                        } else {
+                            self.niri.layout.activate_window(&window);
+                            self.niri.layer_shell_on_demand_focus = None;
+                            self.niri.queue_redraw_all();
+                        }
                     }
-                    XdgActivationAction::Ignore => (),
                 }
             } else if let Some(unmapped) = self.niri.unmapped_windows.get_mut(&surface) {
                 unmapped.activation_token_data = Some(token_data);

@@ -133,60 +133,6 @@ fn explicit_policy_applies_to_accepted_invalid_serial() {
 }
 
 #[test]
-fn activation_before_mapping_obeys_policy_and_serial() {
-    for (policy, valid, serialless) in [
-        (None, (true, false), (false, true)),
-        (Some("ignore"), (false, false), (false, false)),
-        (Some("set-urgent"), (false, true), (false, true)),
-        (Some("focus"), (true, false), (true, false)),
-    ] {
-        // Isolate activation requests from ordinary new-window focus decisions.
-        let config = format!(
-            "debug {{ strict-new-window-focus-policy; }}\n{}",
-            activation_config(policy),
-        );
-        for (with_serial, expected) in [(true, valid), (false, serialless)] {
-            assert_eq!(
-                target_state_after_activation_before_mapping(&config, with_serial),
-                expected,
-                "policy {policy:?}, with_serial {with_serial}",
-            );
-        }
-    }
-}
-
-#[test]
-fn open_focused_overrides_activation_focus_before_mapping() {
-    assert_eq!(
-        target_state_after_activation_before_mapping(
-            r#"
-            window-rule {
-                open-focused false
-                on-xdg-activate "focus"
-            }
-            "#,
-            false,
-        ),
-        (false, false),
-    );
-}
-
-#[test]
-fn serialless_activation_before_mapping_is_urgent_with_open_focused_false() {
-    assert_eq!(
-        target_state_after_activation_before_mapping(
-            r#"
-            window-rule {
-                open-focused false
-            }
-            "#,
-            false,
-        ),
-        (false, true),
-    );
-}
-
-#[test]
 fn ignored_activation_window_remains_directly_focusable() {
     let (mut fixture, target) = mapped_target_with_focused_peer(&activation_config(Some("ignore")));
 
@@ -269,54 +215,6 @@ fn mapped_target_with_focused_peer(config: &str) -> (Fixture, MappedTarget) {
             window,
         },
     )
-}
-
-fn target_state_after_activation_before_mapping(config: &str, with_serial: bool) -> (bool, bool) {
-    let mut fixture = Fixture::with_config(Config::parse_mem(config).unwrap());
-    fixture.add_output(1, (1920, 1080));
-
-    let client_id = fixture.add_client();
-    map_window(&mut fixture, client_id);
-    let source_window = fixture
-        .niri()
-        .layout
-        .windows()
-        .next()
-        .unwrap()
-        .1
-        .window
-        .clone();
-
-    // Strict new-window focus leaves the source unfocused; establish actual input focus
-    // so valid-serial cases exercise a token supported by a keyboard enter event.
-    fixture.niri().layout.activate_window(&source_window);
-    fixture.double_roundtrip(client_id);
-
-    let target = fixture.client(client_id).create_window();
-    let target_surface = target.surface.clone();
-    target.commit();
-    fixture.roundtrip(client_id);
-
-    let serial = with_serial.then(|| fixture.client(client_id).keyboard_enter_serial());
-    let token_result = fixture.client(client_id).request_activation_token(serial);
-    fixture.roundtrip(client_id);
-    let token = token_result.lock().unwrap().take().unwrap();
-    fixture.client(client_id).activate(token, &target_surface);
-    fixture.roundtrip(client_id);
-
-    let target = fixture.client(client_id).window(&target_surface);
-    target.attach_new_buffer();
-    target.ack_last_and_commit();
-    fixture.double_roundtrip(client_id);
-
-    let target = fixture
-        .niri()
-        .layout
-        .windows()
-        .find(|(_, mapped)| mapped.window != source_window)
-        .unwrap()
-        .1;
-    (target.is_focused(), target.is_urgent())
 }
 
 fn activate_target(fixture: &mut Fixture, target: &MappedTarget, serial: Option<u32>) {

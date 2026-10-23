@@ -17,7 +17,7 @@ use smithay::wayland::shm::{ShmHandler, ShmState};
 
 use super::dmabuf_readiness::add_dmabuf_readiness_blocker;
 use super::xdg_shell::add_mapped_toplevel_pre_commit_hook;
-use crate::handlers::{xdg_activation_action, XdgActivationAction, XDG_ACTIVATION_TOKEN_TIMEOUT};
+use crate::handlers::XDG_ACTIVATION_TOKEN_TIMEOUT;
 use crate::layout::{ActivateWindow, AddWindowTarget, LayoutElement as _};
 use crate::niri::{CastTarget, ClientState, LockState, State};
 use crate::utils::transaction::Transaction;
@@ -173,12 +173,6 @@ impl CompositorHandler for State {
                     let is_floating = rules.compute_open_floating(toplevel);
 
                     // Figure out if we should activate the window.
-                    let token = activation_token_data
-                        .as_ref()
-                        .filter(|token| token.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT);
-                    let activation_action =
-                        token.map(|token| xdg_activation_action(token, rules.on_xdg_activate));
-                    let mark_urgent = activation_action == Some(XdgActivationAction::Urgent);
                     let activate = rules.open_focused.map(|focus| {
                         if focus {
                             ActivateWindow::Yes
@@ -187,7 +181,12 @@ impl CompositorHandler for State {
                         }
                     });
                     let activate = activate.unwrap_or_else(|| {
-                        if activation_action == Some(XdgActivationAction::Activate) {
+                        // Check the token timestamp again in case the window took a while between
+                        // requesting activation and mapping.
+                        let token = activation_token_data.filter(|token| {
+                            token.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT
+                        });
+                        if token.is_some() {
                             ActivateWindow::Yes
                         } else {
                             let config = self.niri.config.borrow();
@@ -244,14 +243,6 @@ impl CompositorHandler for State {
                         activate,
                     );
                     let output = output.cloned();
-
-                    if mark_urgent {
-                        if let Some((mapped, _)) =
-                            self.niri.layout.find_window_and_output_mut(surface)
-                        {
-                            mapped.set_urgent(true);
-                        }
-                    }
 
                     // The window state cannot contain Fullscreen and Maximized at once. Therefore,
                     // if the window ended up fullscreen, then we only know that it is also
