@@ -58,7 +58,7 @@ pub use crate::output::{Output, OutputName, Outputs, Position, Vrr};
 use crate::recent_windows::RecentWindowsPart;
 pub use crate::recent_windows::{MruDirection, MruFilter, MruPreviews, MruScope, RecentWindows};
 pub use crate::utils::FloatOrInt;
-use crate::utils::{Flag, MergeWith as _};
+use crate::utils::{expand_home_path, Flag, MergeWith as _};
 pub use crate::window_rule::{
     FloatingPosition, OnXdgActivate, PopupsRule, RelativeTo, ResolvedPopupsRules, WindowRule,
 };
@@ -117,8 +117,12 @@ pub enum ConfigPath {
 struct BasePath(PathBuf);
 struct RootBase(PathBuf);
 struct Recursion(u8);
+
+// FIXME: This is currently used to track all the files that needed to be watched. The name
+// `Includes` is not really correct and should be renamed in the future.
 #[derive(Default)]
 struct Includes(Vec<PathBuf>);
+
 #[derive(Default)]
 struct IncludeErrors(Vec<knuffel::Error>);
 // Used for recursive include detection.
@@ -303,8 +307,6 @@ where
                             "additional argument for include path is required",
                         )
                     })?;
-                    let path: PathBuf = knuffel::traits::DecodeScalar::decode(path_val, ctx)?;
-
                     // Check for extra arguments
                     if let Some(val) = iter_args.next() {
                         ctx.emit_error(DecodeError::unexpected(
@@ -343,21 +345,11 @@ where
                     // We use DecodeError::Missing throughout this block because it results in the
                     // least confusing error messages while still allowing to provide a span.
 
-                    // Expand ~ into the home dir
-                    let path = if let Ok(rest) = path.strip_prefix("~") {
-                        let Some(home) = std::env::home_dir() else {
-                            ctx.emit_error(DecodeError::missing(
-                                node,
-                                format!("error retrieving home directory to expand {path:?}"),
-                            ));
-                            continue;
-                        };
+                    let decoded_path = knuffel::traits::DecodeScalar::decode(path_val, ctx)?;
 
-                        home.join(rest)
-                    } else {
-                        // Otherwise, use the current include base dir
-                        let base = ctx.get::<BasePath>().unwrap();
-                        base.0.join(path)
+                    // Expand ~ into the home dir
+                    let Some(path) = expand_home_path(decoded_path, node, ctx) else {
+                        continue;
                     };
 
                     let recursion = ctx.get::<Recursion>().unwrap().0 + 1;
@@ -708,6 +700,7 @@ mod tests {
                     tap-button-map "left-middle-right"
                     disabled-on-external-mouse
                     scroll-factor 0.9
+                    pinch-sensitivity 1.8
                 }
 
                 mouse {
@@ -916,6 +909,7 @@ mod tests {
                 default-column-display "tabbed"
                 default-floating-position x=100 y=-200 relative-to="bottom-left"
                 on-xdg-activate "ignore"
+                variable-refresh-rate "fullscreen-only"
 
                 focus-ring {
                     off
@@ -930,6 +924,8 @@ mod tests {
                 tab-indicator {
                     active-color "#f00"
                 }
+
+                pinch-sensitivity 1.2
             }
 
             layer-rule {
@@ -968,6 +964,7 @@ mod tests {
 
             workspace "workspace-1" {
                 open-on-output "eDP-1"
+                open-on-output "DP-1"
             }
             workspace "workspace-2"
             workspace "workspace-3"
@@ -1054,6 +1051,11 @@ mod tests {
                             horizontal: None,
                             vertical: None,
                         },
+                    ),
+                    pinch_sensitivity: Some(
+                        FloatOrInt(
+                            1.8,
+                        ),
                     ),
                 },
                 mouse: Mouse {
@@ -1509,6 +1511,12 @@ mod tests {
                     b: 0.25,
                     a: 1.0,
                 },
+                fullscreen_backdrop_color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
             },
             prefer_no_csd: true,
             cursor: Cursor {
@@ -1900,7 +1908,9 @@ mod tests {
                     clip_to_geometry: None,
                     baba_is_float: None,
                     block_out_from: None,
-                    variable_refresh_rate: None,
+                    variable_refresh_rate: Some(
+                        FullscreenOnly,
+                    ),
                     default_column_display: Some(
                         Tabbed,
                     ),
@@ -1916,6 +1926,11 @@ mod tests {
                         },
                     ),
                     scroll_factor: None,
+                    pinch_sensitivity: Some(
+                        FloatOrInt(
+                            1.2,
+                        ),
+                    ),
                     tiled_state: None,
                     background_effect: BackgroundEffectRule {
                         xray: None,
@@ -2314,23 +2329,24 @@ mod tests {
                     name: WorkspaceName(
                         "workspace-1",
                     ),
-                    open_on_output: Some(
+                    open_on_output: [
                         "eDP-1",
-                    ),
+                        "DP-1",
+                    ],
                     layout: None,
                 },
                 Workspace {
                     name: WorkspaceName(
                         "workspace-2",
                     ),
-                    open_on_output: None,
+                    open_on_output: [],
                     layout: None,
                 },
                 Workspace {
                     name: WorkspaceName(
                         "workspace-3",
                     ),
-                    open_on_output: None,
+                    open_on_output: [],
                     layout: None,
                 },
             ],
