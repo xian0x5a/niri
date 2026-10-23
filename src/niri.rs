@@ -5655,8 +5655,6 @@ impl Niri {
     }
 
     pub fn send_frame_callbacks_on_fallback_timer(&mut self) {
-        // No output can present client content while monitors are inactive. Reactivation queues
-        // redraws for every output, so callbacks will resume once content can be presented again.
         if !self.monitors_active || self.output_state.is_empty() {
             return;
         }
