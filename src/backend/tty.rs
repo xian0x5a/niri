@@ -27,11 +27,11 @@ use smithay::backend::drm::{
     DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata, DrmEventTime, DrmNode, NodeType, VrrSupport,
 };
 use smithay::backend::egl::context::ContextPriority;
-use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
+use smithay::backend::egl::{EGLDevice, EGLDisplay};
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
-use smithay::backend::renderer::gles::{Capability, GlesRenderer};
+use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::multigpu::gbm::GbmGlesBackend;
-use smithay::backend::renderer::multigpu::{self, GpuManager, MultiFrame, MultiRenderer};
+use smithay::backend::renderer::multigpu::{GpuManager, MultiFrame, MultiRenderer};
 use smithay::backend::renderer::{DebugFlags, ImportDma, ImportEgl, RendererSuper};
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};
@@ -493,7 +493,7 @@ impl Tty {
             })
             .unwrap();
 
-        let api = GbmGlesBackend::with_factory(create_renderer_without_texture_fences);
+        let api = GbmGlesBackend::with_context_priority(ContextPriority::High);
         let gpu_manager = GpuManager::new(api).context("error creating the GPU manager")?;
 
         let (primary_node, primary_render_node) = primary_node_from_config(&config.borrow())
@@ -3155,29 +3155,6 @@ impl GammaProps {
 
         Ok(())
     }
-}
-
-/// Creates a renderer without `Capability::Fencing`, so Smithay stops creating a `glFenceSync`
-/// after every texture sample and memory upload.
-///
-/// Those fences only order texture access across shared EGL contexts. niri never shares its
-/// contexts, so in-order GL commands already guarantee the same ordering, and Smithay's
-/// shared-context `glFinish` fallback stays inactive. Fences for render-to-texture and per-frame
-/// exported sync points are unaffected.
-///
-/// NVIDIA 615.x leaks host memory for every sync object, even after deletion, which made niri
-/// grow by about 1 GB/day:
-/// https://forums.developer.nvidia.com/t/615-78-08-glfencesync-leaks-host-memory-never-freed/385726
-fn create_renderer_without_texture_fences(
-    display: &EGLDisplay,
-) -> Result<GlesRenderer, multigpu::gbm::Error> {
-    let context = EGLContext::new_with_priority(display, ContextPriority::High)?;
-    // SAFETY: the context was just created and is not current on any other thread.
-    let capabilities = unsafe { GlesRenderer::supported_capabilities(&context)? }
-        .into_iter()
-        .filter(|capability| *capability != Capability::Fencing);
-    // SAFETY: as above.
-    Ok(unsafe { GlesRenderer::with_capabilities(context, capabilities)? })
 }
 
 fn primary_node_from_render_node(path: &Path) -> Option<(DrmNode, DrmNode)> {
