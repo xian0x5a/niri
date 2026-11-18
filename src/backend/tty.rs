@@ -1852,7 +1852,7 @@ impl Tty {
         }
     }
 
-    fn on_estimated_vblank_timer(&self, niri: &mut Niri, output: Output) {
+    fn on_estimated_vblank_timer(niri: &mut Niri, output: Output) {
         let span = tracy_client::span!("Tty::on_estimated_vblank_timer");
 
         let name = output.name();
@@ -1887,12 +1887,7 @@ impl Tty {
         if unfinished_animations_remain {
             niri.queue_redraw(&output);
         } else {
-            let is_virtual = VirtualOutputMarker::is_virtual(&output);
-            if is_virtual {
-                niri.send_frame_callbacks_for_virtual_output(&output);
-            } else {
-                niri.send_frame_callbacks(&output);
-            }
+            niri.send_frame_callbacks(&output);
         }
     }
 
@@ -1929,9 +1924,13 @@ impl Tty {
 
         let mut rv = RenderResult::Skipped;
 
-        let is_virtual = VirtualOutputMarker::is_virtual(output);
-        if is_virtual {
-            return self.render_virtual_output(niri, output, target_presentation_time);
+        if VirtualOutputMarker::is_virtual(output) {
+            let mut renderer = self
+                .gpu_manager
+                .single_renderer(&self.primary_render_node)
+                .ok();
+            let renderer = renderer.as_mut().map(|r| r.as_gles_renderer());
+            return virtual_output::advance(niri, renderer, output, target_presentation_time);
         }
 
         let Some(tty_state) = output.user_data().get::<TtyOutputState>() else {
@@ -2374,45 +2373,6 @@ impl Tty {
 
     pub fn ipc_outputs(&self) -> Arc<Mutex<IpcOutputMap>> {
         self.ipc_outputs.clone()
-    }
-
-    /// Advance a virtual output without rendering a DRM framebuffer.
-    fn render_virtual_output(
-        &mut self,
-        niri: &mut Niri,
-        output: &Output,
-        target_presentation_time: Duration,
-    ) -> RenderResult {
-        use smithay::wayland::presentation::Refresh;
-
-        let now = get_monotonic_time();
-
-        if niri.virtual_output_has_presentation_feedbacks(output) {
-            if let Some(states) = self.with_primary_renderer(|renderer| {
-                niri.virtual_output_render_element_states(renderer, output)
-            }) {
-                niri.update_primary_scanout_output(output, &states);
-                let mut presentation_feedbacks = niri.take_presentation_feedbacks(output, &states);
-                presentation_feedbacks.presented::<_, smithay::utils::Monotonic>(
-                    now,
-                    Refresh::Unknown,
-                    0,
-                    wp_presentation_feedback::Kind::empty(),
-                );
-            }
-        }
-
-        // Update the frame clock so animation timing works correctly.
-        let Some(output_state) = niri.output_state.get_mut(output) else {
-            error!("missing output state for output {}", output.name());
-            return RenderResult::Skipped;
-        };
-        output_state.frame_clock.presented(now);
-
-        // Use the estimated vblank timer to pace redraws, just like physical outputs.
-        queue_estimated_vblank_timer(niri, output.clone(), target_presentation_time);
-
-        RenderResult::Submitted
     }
 
     pub fn create_virtual_output(
@@ -3343,7 +3303,7 @@ fn suspend() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn queue_estimated_vblank_timer(
+pub(super) fn queue_estimated_vblank_timer(
     niri: &mut Niri,
     output: Output,
     target_presentation_time: Duration,
@@ -3386,9 +3346,7 @@ fn queue_estimated_vblank_timer(
     let token = niri
         .event_loop
         .insert_source(timer, move |_, _, data| {
-            data.backend
-                .tty()
-                .on_estimated_vblank_timer(&mut data.niri, output.clone());
+            Tty::on_estimated_vblank_timer(&mut data.niri, output.clone());
             TimeoutAction::Drop
         })
         .unwrap();

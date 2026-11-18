@@ -46,8 +46,8 @@ pub type IpcOutputMap = HashMap<OutputId, niri_ipc::Output>;
 /// Marker inserted into `Output::user_data()` for outputs that are not driven by a real scanout
 /// pipeline (e.g. HEADLESS-* virtual outputs).
 ///
-/// Such outputs require special-casing in a few places (notably frame callback delivery), because
-/// they don't participate in the normal GPU pipeline that tracks `surface_primary_scanout_output`.
+/// Such outputs are advanced by [`virtual_output::advance`] instead of being rendered, and their
+/// redraws wait for the estimated VBlank timer, since no real VBlank paces them.
 #[derive(Debug, Default)]
 pub struct VirtualOutputMarker;
 
@@ -122,7 +122,7 @@ impl Backend {
         match self {
             Backend::Tty(tty) => tty.render(niri, output, target_presentation_time),
             Backend::Winit(winit) => winit.render(niri, output),
-            Backend::Headless(headless) => headless.render(niri, output),
+            Backend::Headless(headless) => headless.render(niri, output, target_presentation_time),
         }
     }
 

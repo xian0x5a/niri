@@ -1,7 +1,6 @@
 //! Note: This backend has limited DMA-BUF support intended for screencopy.
 
 use std::collections::HashMap;
-use std::mem;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -21,21 +20,18 @@ use smithay::backend::libinput::LibinputInputBackend;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::{ImportDma, ImportEgl};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::input;
 use smithay::reexports::input::Libinput;
-use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 #[cfg(feature = "xdp-gnome-screencast")]
 use smithay::utils::DeviceFd;
 use smithay::utils::Size;
 use smithay::wayland::dmabuf::{DmabufFeedbackBuilder, DmabufGlobal};
-use smithay::wayland::presentation::Refresh;
 
 use super::{virtual_output, IpcOutputMap, OutputId, RenderResult, VirtualOutputMarker};
-use crate::niri::{Niri, RedrawState, State};
+use crate::niri::{Niri, State};
 use crate::render_helpers::{resources, shaders};
-use crate::utils::{get_monotonic_time, logical_output};
+use crate::utils::logical_output;
 
 pub struct Headless {
     renderer: Option<GlesRenderer>,
@@ -397,78 +393,15 @@ impl Headless {
         self.renderer.as_ref().and(self.render_node)
     }
 
-    pub fn render(&mut self, niri: &mut Niri, output: &Output) -> RenderResult {
-        let now = get_monotonic_time();
-
-        if niri.virtual_output_has_presentation_feedbacks(output) {
-            if let Some(renderer) = self.renderer.as_mut() {
-                let states = niri.virtual_output_render_element_states(renderer, output);
-                niri.update_primary_scanout_output(output, &states);
-                let mut presentation_feedbacks = niri.take_presentation_feedbacks(output, &states);
-                presentation_feedbacks.presented::<_, smithay::utils::Monotonic>(
-                    now,
-                    Refresh::Unknown,
-                    0,
-                    wp_presentation_feedback::Kind::empty(),
-                );
-            }
-        }
-
-        let output_state = niri.output_state.get_mut(output).unwrap();
-        match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
-            RedrawState::Idle => unreachable!(),
-            RedrawState::Queued => (),
-            RedrawState::WaitingForVBlank { .. } => unreachable!(),
-            RedrawState::WaitingForEstimatedVBlank(token)
-            | RedrawState::WaitingForEstimatedVBlankAndQueued(token) => {
-                niri.event_loop.remove(token);
-            }
-        }
-
-        output_state.frame_clock.presented(now);
-        output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
-
-        let refresh_interval = output_state
-            .frame_clock
-            .refresh_interval()
-            .unwrap_or(Duration::from_micros(16_667));
-
-        let output_clone = output.clone();
-        let timer = Timer::from_duration(refresh_interval);
-        let token = niri
-            .event_loop
-            .insert_source(timer, move |_, _, data| {
-                let output_state = data.niri.output_state.get_mut(&output_clone).unwrap();
-                output_state.frame_callback_sequence =
-                    output_state.frame_callback_sequence.wrapping_add(1);
-
-                match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
-                    RedrawState::WaitingForEstimatedVBlank(_) => (),
-                    RedrawState::WaitingForEstimatedVBlankAndQueued(_) => {
-                        output_state.redraw_state = RedrawState::Queued;
-                        return TimeoutAction::Drop;
-                    }
-                    _ => unreachable!(),
-                }
-
-                let unfinished_animations_remain = output_state.unfinished_animations_remain;
-
-                if !data.niri.monitors_active {
-                    return TimeoutAction::Drop;
-                }
-
-                if unfinished_animations_remain {
-                    data.niri.queue_redraw(&output_clone);
-                } else {
-                    data.niri
-                        .send_frame_callbacks_for_virtual_output(&output_clone);
-                }
-                TimeoutAction::Drop
-            })
-            .unwrap();
-        output_state.redraw_state = RedrawState::WaitingForEstimatedVBlank(token);
-
-        RenderResult::Submitted
+    pub fn render(
+        &mut self,
+        niri: &mut Niri,
+        output: &Output,
+        target_presentation_time: Duration,
+    ) -> RenderResult {
+        // Every output of this backend is virtual.
+        let renderer = self.renderer.as_mut();
+        virtual_output::advance(niri, renderer, output, target_presentation_time)
     }
 
     pub fn import_dmabuf(&mut self, dmabuf: &Dmabuf) -> bool {

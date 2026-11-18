@@ -98,7 +98,7 @@ use smithay::wayland::keyboard_shortcuts_inhibit::{
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraintsState};
 use smithay::wayland::pointer_gestures::PointerGesturesState;
-use smithay::wayland::presentation::{PresentationFeedbackCachedState, PresentationState};
+use smithay::wayland::presentation::PresentationState;
 use smithay::wayland::relative_pointer::RelativePointerManagerState;
 use smithay::wayland::security_context::SecurityContextState;
 use smithay::wayland::selection::data_device::{set_data_device_selection, DataDeviceState};
@@ -5110,12 +5110,7 @@ impl Niri {
         //
         // However, this should probably be restricted to sending frame callbacks to more surfaces,
         // to err on the safe side.
-        let is_virtual = crate::backend::VirtualOutputMarker::is_virtual(output);
-        if is_virtual {
-            self.send_frame_callbacks_for_virtual_output(output);
-        } else {
-            self.send_frame_callbacks(output);
-        }
+        self.send_frame_callbacks(output);
 
         backend.with_primary_renderer(|renderer| {
             #[cfg(feature = "xdp-gnome-screencast")]
@@ -5608,52 +5603,6 @@ impl Niri {
         }
     }
 
-    /// Send frame callbacks for a virtual output.
-    ///
-    /// Virtual outputs (e.g. HEADLESS-*) don't go through the normal scanout/render pipeline that
-    /// updates `surface_primary_scanout_output`, so the regular `send_frame_callbacks` visibility
-    /// filtering would often suppress callbacks entirely.
-    ///
-    /// This function therefore sends callbacks to surfaces associated with `output`
-    /// unconditionally (still subject to the per-surface throttling done inside `send_frame`).
-    ///
-    /// Note: this deliberately does not send callbacks for global/pointer-related surfaces (cursor
-    /// image, drag-and-drop icon) because those rely on the normal primary-output based
-    /// deduplication.
-    pub fn send_frame_callbacks_for_virtual_output(&mut self, output: &Output) {
-        let _span = tracy_client::span!("Niri::send_frame_callbacks_for_virtual_output");
-
-        let frame_callback_time = get_monotonic_time();
-
-        for mapped in self.layout.windows_for_output_mut(output) {
-            mapped.send_frame(
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                |_, _| Some(output.clone()),
-            );
-        }
-
-        for surface in layer_map_for_output(output).layers() {
-            surface.send_frame(
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                |_, _| Some(output.clone()),
-            );
-        }
-
-        if let Some(surface) = &self.output_state[output].lock_surface {
-            send_frames_surface_tree(
-                surface.wl_surface(),
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                |_, _| Some(output.clone()),
-            );
-        }
-    }
-
     pub fn send_frame_callbacks_on_fallback_timer(&mut self) {
         if !self.monitors_active || self.output_state.is_empty() {
             return;
@@ -5725,37 +5674,6 @@ impl Niri {
                 |_, _| None,
             );
         }
-    }
-
-    /// Check whether a virtual tick needs the scene visibility pass used by presentation feedback.
-    pub fn virtual_output_has_presentation_feedbacks(&self, output: &Output) -> bool {
-        let mut has_feedbacks = false;
-        let mut check_surface = |_: &WlSurface, states: &SurfaceData| {
-            let mut guard = states.cached_state.get::<PresentationFeedbackCachedState>();
-            has_feedbacks |= !guard.current().callbacks.is_empty();
-        };
-
-        if let CursorImageStatus::Surface(surface) = &self.cursor_manager.cursor_image() {
-            with_surfaces_surface_tree(surface, &mut check_surface);
-        }
-
-        if let Some(surface) = self.dnd_icon.as_ref().map(|icon| &icon.surface) {
-            with_surfaces_surface_tree(surface, &mut check_surface);
-        }
-
-        for mapped in self.layout.windows_for_output(output) {
-            mapped.window.with_surfaces(&mut check_surface);
-        }
-
-        for surface in layer_map_for_output(output).layers() {
-            surface.with_surfaces(&mut check_surface);
-        }
-
-        if let Some(surface) = &self.output_state[output].lock_surface {
-            with_surfaces_surface_tree(surface.wl_surface(), &mut check_surface);
-        }
-
-        has_feedbacks
     }
 
     /// Compute which surfaces the virtual output presents without rendering a DRM frame.

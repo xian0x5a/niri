@@ -5,13 +5,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use niri_config::{Config, OutputName};
+use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
-use smithay::utils::Size;
+use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
+use smithay::utils::{Monotonic, Size};
+use smithay::wayland::presentation::Refresh;
 
-use super::{IpcOutputMap, OutputId, VirtualOutputMarker};
+use super::tty::queue_estimated_vblank_timer;
+use super::{IpcOutputMap, OutputId, RenderResult, VirtualOutputMarker};
 use crate::frame_clock::FrameClock;
 use crate::niri::Niri;
-use crate::utils::logical_output;
+use crate::utils::{get_monotonic_time, logical_output};
 
 pub(super) struct BuiltVirtualOutput {
     pub name: String,
@@ -32,6 +36,54 @@ pub(super) fn refresh_interval_from_millihz(refresh_millihz: u64) -> Duration {
     } else {
         Duration::from_nanos(interval_nanos)
     }
+}
+
+/// Advances a virtual output by one refresh cycle, in place of rendering a frame.
+///
+/// A virtual output has no scanout, so no frame is composited here; that only happens on demand
+/// for capture clients. What clients do need is the pacing of a physical monitor: frame callbacks
+/// and presentation feedback for the surfaces the output shows, once per refresh interval. Both
+/// backends that host virtual outputs call this for their redraw.
+pub(super) fn advance(
+    niri: &mut Niri,
+    renderer: Option<&mut GlesRenderer>,
+    output: &Output,
+    target_presentation_time: Duration,
+) -> RenderResult {
+    // Work out which surfaces the output shows, as a rendered frame does for a physical output.
+    // The regular frame callback and presentation feedback paths rely on this.
+    //
+    // Without a renderer no surface counts as shown, and nothing can be captured from the output
+    // either. The cycle still advances, so that the session can be locked.
+    if let Some(renderer) = renderer {
+        let states = niri.virtual_output_render_element_states(renderer, output);
+        niri.update_primary_scanout_output(output, &states);
+
+        let mut presentation_feedbacks = niri.take_presentation_feedbacks(output, &states);
+        presentation_feedbacks.presented::<_, Monotonic>(
+            get_monotonic_time(),
+            Refresh::Unknown,
+            0,
+            wp_presentation_feedback::Kind::empty(),
+        );
+    }
+
+    let output_state = niri.output_state.get_mut(output).unwrap();
+
+    // Anchor the clock to the target rather than to now. The timer below fires at the target, so
+    // anchoring to now would put the next target between two timer ticks, and the output would
+    // tick twice per refresh interval.
+    output_state.frame_clock.presented(target_presentation_time);
+
+    // This cycle has latched the current client buffers, like a frame queued on a physical output,
+    // so the surfaces may receive their frame callbacks.
+    output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
+
+    // The estimated VBlank timer stands in for the VBlank of a physical output. It is not specific
+    // to the TTY backend, despite where upstream defines it.
+    queue_estimated_vblank_timer(niri, output.clone(), target_presentation_time);
+
+    RenderResult::Submitted
 }
 
 fn set_virtual_output_mode_single(output: &Output, mode: Mode) {

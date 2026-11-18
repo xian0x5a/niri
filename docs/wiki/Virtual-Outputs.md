@@ -85,6 +85,23 @@ output "sunshine" {
 }
 ```
 
+## Frame pacing
+
+A virtual output paces applications like a physical monitor with the same refresh rate:
+
+- A surface shown on the output receives at most one frame callback per refresh interval. The
+  intervals follow a fixed schedule derived from the output's refresh rate.
+- A surface that is not shown, for example on another workspace or scrolled out of view, only
+  receives the slow fallback callbacks, about once per second. An application that waits for frame
+  callbacks therefore stops rendering at full speed while it is hidden, also when its window is
+  being screencast.
+- niri does not composite a virtual output on this schedule. It composites a frame only when a
+  capture client asks for one, so a virtual output that nobody captures costs little.
+
+To match an application to a stream, set the output's refresh rate to the stream's frame rate and
+keep vsync enabled in the application. With vsync disabled an application ignores frame callbacks
+and renders as fast as it can, as it would on a monitor.
+
 ## Using with Sunshine
 
 If you want, you can tell [Sunshine](https://github.com/LizardByte/Sunshine) to create a virtual output that matches the client ([Moonlight](https://github.com/moonlight-stream/moonlight-qt)) resolution + refresh rate when a session starts, and remove it when the session ends.
