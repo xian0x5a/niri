@@ -59,9 +59,8 @@ pub struct Headless {
 }
 
 impl Headless {
-    pub fn new(event_loop: LoopHandle<'static, State>) -> Self {
+    pub fn new() -> Self {
         let udev_seat = std::env::var("XDG_SEAT").unwrap_or_else(|_| "seat0".to_owned());
-        init_headless_libinput(event_loop, &udev_seat);
 
         Self {
             renderer: None,
@@ -88,6 +87,8 @@ impl Headless {
     /// Call after `State::new()`, which creates the configured virtual outputs, and before the
     /// event loop runs, so that clients find the linux-dmabuf global on their first roundtrip.
     pub fn start_session(&mut self, niri: &mut Niri) {
+        init_headless_libinput(niri.event_loop.clone(), &self.udev_seat);
+
         if let Err(err) = self.add_renderer() {
             warn!("failed to create headless renderer: {err:?}");
         } else if let Some(renderer) = self.renderer.as_mut() {
@@ -486,19 +487,7 @@ impl Headless {
 
 impl Default for Headless {
     fn default() -> Self {
-        // This is only used by tests / callers that don't care about input.
-        // Headless libinput requires an event loop handle, so default disables it.
-        Self {
-            renderer: None,
-            dmabuf_global: None,
-            render_node: None,
-            #[cfg(feature = "xdp-gnome-screencast")]
-            gbm: None,
-            ipc_outputs: Default::default(),
-            udev_seat: "seat0".to_string(),
-            output_counter: 0,
-            outputs: HashMap::new(),
-        }
+        Self::new()
     }
 }
 

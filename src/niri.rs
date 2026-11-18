@@ -816,7 +816,7 @@ impl State {
             || env::var_os("DISPLAY").is_some();
 
         let mut backend = if headless {
-            let headless = Headless::new(event_loop.clone());
+            let headless = Headless::new();
             Backend::Headless(headless)
         } else if has_display {
             let winit = Winit::new(config.clone(), event_loop.clone())?;
