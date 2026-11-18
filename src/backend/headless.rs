@@ -81,7 +81,13 @@ impl Headless {
         self.gbm.clone()
     }
 
-    pub fn init(&mut self, niri: &mut Niri) {
+    pub fn init(&mut self, _niri: &mut Niri) {}
+
+    /// Sets up a real headless session on top of the bare backend that tests use.
+    ///
+    /// Call after `State::new()`, which creates the configured virtual outputs, and before the
+    /// event loop runs, so that clients find the linux-dmabuf global on their first roundtrip.
+    pub fn start_session(&mut self, niri: &mut Niri) {
         if let Err(err) = self.add_renderer() {
             warn!("failed to create headless renderer: {err:?}");
         } else if let Some(renderer) = self.renderer.as_mut() {
@@ -157,10 +163,8 @@ impl Headless {
             }
         }
 
-        // In real headless sessions we want a default output so clients have something to render
-        // on. In tests, the harness explicitly creates predictable `headless-N` outputs; creating
-        // an extra default `HEADLESS-1` here causes name collisions and snapshot churn.
-        if self.outputs.is_empty() && !cfg!(test) {
+        // Clients need an output to render on; add one unless the config declares some.
+        if self.outputs.is_empty() {
             let _ = self.create_virtual_output(niri, 1920, 1080, 60, None);
         }
     }

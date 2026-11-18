@@ -39,7 +39,8 @@ For servers or remote-only access (e.g. SSH) where a real TTY is not available:
 ```bash
 # Start niri in headless mode
 NIRI_BACKEND=headless niri --session &
-# A 1920x1080@60 HEADLESS-1 virtual output is created by default
+# Unless the config declares `create-virtual` outputs, a 1920x1080@60 HEADLESS-1 virtual
+# output is created by default
 ```
 
 Note: if you’re running commands from another shell, you may need to set `WAYLAND_DISPLAY` to the
@@ -134,8 +135,8 @@ The snippets below are intentionally minimal; adjust them to your Sunshine setup
 
 ### Headless backend (reuse the default output)
 
-In headless mode, niri creates `HEADLESS-1` by default. You can just change its mode for the
-session and restore it afterwards.
+In headless mode without `create-virtual` outputs in the config, niri creates `HEADLESS-1` by
+default. You can just change its mode for the session and restore it afterwards.
 
 ```json
 {

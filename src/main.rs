@@ -201,6 +201,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .unwrap();
 
+    if headless {
+        state.backend.headless().start_session(&mut state.niri);
+    }
+
     // Set WAYLAND_DISPLAY for children.
     let socket_name = state.niri.socket_name.as_deref().unwrap();
     env::set_var("WAYLAND_DISPLAY", socket_name);

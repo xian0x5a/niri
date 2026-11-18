@@ -78,6 +78,7 @@ Notes:
 
 - Only supported on the TTY and Headless backends (not supported on Winit).
 - Niri will create the output at compositor startup and on config reload.
+- In headless mode, declaring any `create-virtual` output replaces the default `HEADLESS-1`.
 - Niri will not automatically remove outputs that you delete from the config.
 
 ```kdl
