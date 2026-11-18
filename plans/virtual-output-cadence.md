@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 ---
 
 # Pace virtual outputs like physical monitors
@@ -65,7 +65,8 @@ be one implementation, so that the headless tests exercise what the TTY session 
 - [x] Tests, clippy, and format pass.
 - [x] Independent review done, findings addressed.
 - [x] Headless end-to-end probe run.
-- [ ] Awaiting the user's live check on the TTY backend, then merge and close this plan.
+- [x] Merged into `main` at the user's request, before the live check on the TTY backend. Issue 3
+  stays open until that check.
 
 ## Decisions
 
