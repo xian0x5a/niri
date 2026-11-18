@@ -143,10 +143,16 @@ pub struct ScreencopyFrame {
     pub data: Arc<Mutex<ScreencopyFrameData>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PresentationFeedbackData {
     pub presented: bool,
     pub discarded: bool,
+    /// Fields of the `presented` event; only meaningful once `presented` is set.
+    pub timestamp: Duration,
+    pub refresh_ns: u32,
+    pub flags: Option<wp_presentation_feedback::Kind>,
+    /// Compositor clock (CLOCK_MONOTONIC) when the client received the `presented` event.
+    pub received_at: Duration,
 }
 
 pub struct PresentationFeedback {
@@ -1248,7 +1254,21 @@ impl Dispatch<WpPresentationFeedback, Arc<Mutex<PresentationFeedbackData>>> for 
         let mut data = data.lock().unwrap();
         match event {
             wp_presentation_feedback::Event::SyncOutput { .. } => (),
-            wp_presentation_feedback::Event::Presented { .. } => data.presented = true,
+            wp_presentation_feedback::Event::Presented {
+                tv_sec_hi,
+                tv_sec_lo,
+                tv_nsec,
+                refresh,
+                flags,
+                ..
+            } => {
+                data.presented = true;
+                let secs = (u64::from(tv_sec_hi) << 32) | u64::from(tv_sec_lo);
+                data.timestamp = Duration::new(secs, tv_nsec);
+                data.refresh_ns = refresh;
+                data.flags = flags.into_result().ok();
+                data.received_at = crate::utils::get_monotonic_time();
+            }
             wp_presentation_feedback::Event::Discarded => data.discarded = true,
             _ => unreachable!(),
         }

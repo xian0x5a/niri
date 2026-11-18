@@ -17,6 +17,7 @@ pub use tty::Tty;
 
 mod libinput_plugins;
 mod virtual_output;
+pub use virtual_output::VirtualOutputPresentation;
 
 pub mod winit;
 pub use winit::Winit;

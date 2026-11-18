@@ -563,6 +563,8 @@ pub struct OutputState {
     pub debug_damage_tracker: OutputDamageTracker,
     /// Tracks logical presentation visibility for outputs without a DRM framebuffer.
     virtual_output_damage_tracker: Option<OutputDamageTracker>,
+    /// Last tick of a virtual output, until the estimated VBlank timer reports it as presented.
+    pub virtual_output_pending_presentation: Option<crate::backend::VirtualOutputPresentation>,
 }
 
 #[derive(Debug, Default)]
@@ -3277,6 +3279,7 @@ impl Niri {
             debug_damage_tracker: OutputDamageTracker::from_output(&output),
             virtual_output_damage_tracker: crate::backend::VirtualOutputMarker::is_virtual(&output)
                 .then(|| OutputDamageTracker::from_output(&output)),
+            virtual_output_pending_presentation: None,
         };
         let rv = self.output_state.insert(output.clone(), state);
         assert!(rv.is_none(), "output was already tracked");

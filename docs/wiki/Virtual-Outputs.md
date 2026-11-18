@@ -95,6 +95,11 @@ A virtual output paces applications like a physical monitor with the same refres
   receives the slow fallback callbacks, about once per second. An application that waits for frame
   callbacks therefore stops rendering at full speed while it is hidden, also when its window is
   being screencast.
+- Presentation feedback (`wp_presentation`) reports a frame at the refresh cycle that showed it, as
+  a monitor's VBlank would: it arrives at that cycle's scheduled time, its timestamp is that time,
+  and it carries the output's refresh interval and the `vsync` flag. The sequence counter is always
+  0. Vulkan applications using Mesa and Chromium-based applications read these values to match
+  their pacing to the output.
 - niri does not composite a virtual output on this schedule. It composites a frame only when a
   capture client asks for one, so a virtual output that nobody captures costs little.
 

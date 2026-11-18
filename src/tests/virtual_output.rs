@@ -1,46 +1,12 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use smithay::reexports::wayland_protocols::wp::presentation_time::client::wp_presentation_feedback;
 use wayland_client::protocol::wl_surface::WlSurface;
 
-use super::client::ClientId;
+use super::client::{ClientId, PresentationFeedbackData};
 use super::*;
 use crate::niri::RedrawState;
-
-#[test]
-fn visible_surface_on_virtual_output_receives_presentation_feedback() {
-    let mut f = Fixture::new();
-    {
-        let state = f.niri_state();
-        state
-            .backend
-            .create_virtual_output(&mut state.niri, 1920, 1080, 60, Some("virt".to_owned()))
-            .unwrap();
-    }
-
-    let id = f.add_client();
-    let window = f.client(id).create_window();
-    let surface = window.surface.clone();
-    window.commit();
-    f.roundtrip(id);
-
-    let window = f.client(id).window(&surface);
-    window.attach_new_buffer();
-    window.ack_last_and_commit();
-    f.double_roundtrip(id);
-
-    let feedback = f.client(id).request_presentation_feedback(&surface);
-    f.client(id).window(&surface).commit();
-    f.roundtrip(id);
-
-    // Presentation feedback is emitted on the virtual output's next 60 Hz refresh.
-    std::thread::sleep(Duration::from_millis(20));
-    f.double_roundtrip(id);
-
-    let feedback = feedback.data.lock().unwrap();
-    assert!(feedback.presented);
-    assert!(!feedback.discarded);
-}
 
 /// Sets up a fixture with a virtual output named `virt` at the given refresh rate.
 fn fixture_with_virtual_output(refresh_hz: u32) -> Fixture {
@@ -407,4 +373,81 @@ fn touch_input_targets_virtual_output_when_focused() {
     // output (which may be virtual).
     let touch_output = f.niri().output_for_touch().unwrap().clone();
     assert_eq!(touch_output, virt);
+}
+
+/// Commits `surface` with a presentation feedback request and pumps the event loop until the
+/// compositor answers. The estimated VBlank timer only fires while the loop is dispatched.
+fn wait_for_presentation_feedback(
+    f: &mut Fixture,
+    id: ClientId,
+    surface: &WlSurface,
+) -> PresentationFeedbackData {
+    let feedback = f.client(id).request_presentation_feedback(surface);
+    f.client(id).window(surface).commit();
+
+    let start = Instant::now();
+    loop {
+        std::thread::sleep(Duration::from_millis(1));
+        f.roundtrip(id);
+
+        let data = feedback.data.lock().unwrap();
+        assert!(!data.discarded, "presentation feedback was discarded");
+        if data.presented {
+            return data.clone();
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "no presentation feedback within 1 s"
+        );
+    }
+}
+
+#[test]
+fn virtual_output_presentation_feedback_describes_the_refresh_cycle() {
+    const REFRESH_HZ: u32 = 60;
+    // Same integer division as the output's refresh interval (1e12 / millihertz).
+    let refresh_ns = 1_000_000_000_000_u64 / (u64::from(REFRESH_HZ) * 1000);
+
+    let mut f = fixture_with_virtual_output(REFRESH_HZ);
+    let id = f.add_client();
+    let surface = map_window(&mut f, id);
+
+    let frames: Vec<_> = (0..3)
+        .map(|_| wait_for_presentation_feedback(&mut f, id, &surface))
+        .collect();
+
+    for (i, frame) in frames.iter().enumerate() {
+        assert_eq!(
+            u64::from(frame.refresh_ns),
+            refresh_ns,
+            "frame {i}: refresh must be the output's refresh interval in ns"
+        );
+        assert!(
+            frame
+                .flags
+                .is_some_and(|flags| flags.contains(wp_presentation_feedback::Kind::Vsync)),
+            "frame {i}: flags {:?} must contain Vsync",
+            frame.flags
+        );
+        assert!(
+            frame.timestamp <= frame.received_at,
+            "frame {i}: timestamp {:?} is after receipt at {:?}",
+            frame.timestamp,
+            frame.received_at
+        );
+    }
+
+    // Frames shown in different refresh cycles sit a whole number of intervals apart.
+    for (i, pair) in frames.windows(2).enumerate() {
+        let delta_ns = pair[1]
+            .timestamp
+            .saturating_sub(pair[0].timestamp)
+            .as_nanos();
+        assert!(
+            delta_ns > 0 && delta_ns % u128::from(refresh_ns) == 0,
+            "frames {i} and {}: timestamps differ by {delta_ns} ns, not a nonzero multiple of \
+             {refresh_ns} ns",
+            i + 1
+        );
+    }
 }

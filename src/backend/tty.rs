@@ -1863,6 +1863,9 @@ impl Tty {
             return;
         };
 
+        // For a virtual output this timer is the VBlank that shows its last tick.
+        virtual_output::present_pending_presentation(output_state);
+
         // We waited for the timer, now we can send frame callbacks again.
         output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
 

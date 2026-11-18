@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use niri_config::{Config, OutputName};
 use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::desktop::utils::OutputPresentationFeedback;
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay::utils::{Monotonic, Size};
@@ -14,7 +15,7 @@ use smithay::wayland::presentation::Refresh;
 use super::tty::queue_estimated_vblank_timer;
 use super::{IpcOutputMap, OutputId, RenderResult, VirtualOutputMarker};
 use crate::frame_clock::FrameClock;
-use crate::niri::Niri;
+use crate::niri::{Niri, OutputState};
 use crate::utils::{get_monotonic_time, logical_output};
 
 pub(super) struct BuiltVirtualOutput {
@@ -55,20 +56,26 @@ pub(super) fn advance(
     //
     // Without a renderer no surface counts as shown, and nothing can be captured from the output
     // either. The cycle still advances, so that the session can be locked.
-    if let Some(renderer) = renderer {
+    let presentation_feedbacks = renderer.map(|renderer| {
         let states = niri.virtual_output_render_element_states(renderer, output);
         niri.update_primary_scanout_output(output, &states);
-
-        let mut presentation_feedbacks = niri.take_presentation_feedbacks(output, &states);
-        presentation_feedbacks.presented::<_, Monotonic>(
-            get_monotonic_time(),
-            Refresh::Unknown,
-            0,
-            wp_presentation_feedback::Kind::empty(),
-        );
-    }
+        niri.take_presentation_feedbacks(output, &states)
+    });
 
     let output_state = niri.output_state.get_mut(output).unwrap();
+    let refresh_interval = output_state.frame_clock.refresh_interval();
+    let target_presentation_time = upcoming_grid_point(target_presentation_time, refresh_interval);
+
+    // Like a frame queued on a physical output, what this tick latched is shown at the target, so
+    // report it from the timer that stands in for that VBlank. Reporting it now would claim a
+    // presentation up to one interval in the future.
+    output_state.virtual_output_pending_presentation =
+        presentation_feedbacks.map(|feedbacks| VirtualOutputPresentation {
+            feedbacks,
+            time: target_presentation_time,
+            // Test outputs of the headless backend have no refresh rate.
+            refresh: refresh_interval.map_or(Refresh::Unknown, Refresh::Fixed),
+        });
 
     // Anchor the clock to the target rather than to now. The timer below fires at the target, so
     // anchoring to now would put the next target between two timer ticks, and the output would
@@ -84,6 +91,53 @@ pub(super) fn advance(
     queue_estimated_vblank_timer(niri, output.clone(), target_presentation_time);
 
     RenderResult::Submitted
+}
+
+/// Returns `target` if it lies ahead, otherwise the next point of the refresh grid through it.
+///
+/// The timer reports a tick at its target, so the target has to lie ahead for the report to arrive
+/// at the time it states. It has already passed on the first tick of a new frame clock, which has
+/// no grid yet and returns the current time, and after a tick that took longer than the time left
+/// before its target. A physical output would show such a frame at its next VBlank.
+fn upcoming_grid_point(target: Duration, refresh_interval: Option<Duration>) -> Duration {
+    let now = get_monotonic_time();
+    // Without a grid the timer waits a default interval instead.
+    let Some(refresh_interval) = refresh_interval else {
+        return target;
+    };
+    if target > now {
+        return target;
+    }
+
+    let passed_intervals = (now - target).as_nanos() / refresh_interval.as_nanos();
+    target + refresh_interval * (u32::try_from(passed_intervals).unwrap() + 1)
+}
+
+/// The tick of a virtual output, waiting for the estimated VBlank timer at its target to report it
+/// as presented.
+pub struct VirtualOutputPresentation {
+    feedbacks: OutputPresentationFeedback,
+    time: Duration,
+    refresh: Refresh,
+}
+
+/// Reports the last tick of a virtual output as presented, at the estimated VBlank of its target.
+///
+/// The timestamp is the target rather than the time the timer fired, so that consecutive
+/// timestamps lie on the refresh grid. `Vsync` holds because the content changes only on that
+/// grid; the hardware flags do not apply. The sequence stays 0: a refresh counter would have to
+/// count idle cycles and survive mode switches, and no known client needs it.
+pub(super) fn present_pending_presentation(output_state: &mut OutputState) {
+    let Some(VirtualOutputPresentation {
+        mut feedbacks,
+        time,
+        refresh,
+    }) = output_state.virtual_output_pending_presentation.take()
+    else {
+        return;
+    };
+
+    feedbacks.presented::<_, Monotonic>(time, refresh, 0, wp_presentation_feedback::Kind::Vsync);
 }
 
 fn set_virtual_output_mode_single(output: &Output, mode: Mode) {
