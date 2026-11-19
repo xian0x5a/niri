@@ -56,6 +56,8 @@ Virtual outputs exist for remote streaming, often of games. Clients use these fi
 - [x] Tests, clippy, and format pass.
 - [x] Independent review done, findings addressed.
 - [x] Docs updated, plan closed.
+- [x] Live check on the TTY backend passed after the user installed the build and restarted the
+  session. Issue 4 closed.
 
 ## Decisions
 
@@ -119,5 +121,7 @@ refresh 0, and also catches the rejected design of reporting the target at once 
 receipt). The first-tick case has no committed test: its observable effect is latency, which cannot
 be bounded reliably on a loaded machine, so it was checked with a throwaway probe.
 
-Not verified on the TTY backend, which shares the tick and the timer handler; a live check needs the
-build installed and the session restarted.
+On the TTY backend, a probe on the live session's 120 Hz virtual output received feedback for every
+frame and none discarded. Every feedback carried a refresh of 8333333 ns, the `Vsync` flag and
+sequence 0; the timestamps sat exactly on one grid, one interval apart, and each feedback arrived
+0.2 to 0.6 ms after its timestamp.
