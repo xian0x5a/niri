@@ -65,8 +65,9 @@ be one implementation, so that the headless tests exercise what the TTY session 
 - [x] Tests, clippy, and format pass.
 - [x] Independent review done, findings addressed.
 - [x] Headless end-to-end probe run.
-- [x] Merged into `main` at the user's request, before the live check on the TTY backend. Issue 3
-  stays open until that check.
+- [x] Merged into `main` at the user's request, before the live check on the TTY backend.
+- [x] Live check on the TTY backend passed after the user installed the build and restarted the
+  session. Issue 3 closed.
 
 ## Decisions
 
@@ -159,9 +160,9 @@ The independent review found no defect in the tick itself. It found the load-sen
 the lock regression of the first no-renderer design, and wording that claimed a tick costs no GPU
 time. All three are addressed.
 
-Not yet verified on the TTY backend, the path that showed 211 callbacks per second. It now runs the
-same tick as the headless backend, but a live check needs the build installed and the session
-restarted.
+On the TTY backend, the path that showed 211 callbacks per second, the same probe on the live
+session's 120 Hz virtual output measured 120.0 callbacks per second with every interval between 8
+and 9 ms, with and without a 2 ms render delay.
 
 Follow-up kept out of scope: presentation feedback on virtual outputs still reports the tick time
 with an unknown refresh rate. The fixed grid would allow reporting the target time and the refresh
